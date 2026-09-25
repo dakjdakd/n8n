@@ -27,6 +27,7 @@ import { DEBOUNCE_TIME, HOVER_DELAY } from '@/app/constants/durations';
 import type { ArtifactTab } from '../useCanvasPreview';
 import { hasTabSummary, useArtifactTabSummaries } from '../useArtifactTabSummaries';
 import { useProjectResourceSearch } from '../composables/useProjectResourceSearch';
+import { TAB_DRAG_IGNORE_ATTRIBUTE, useTabDragReorder } from '../composables/useTabDragReorder';
 
 // Experiment cleanup: remove with openWorkflowInAssistant.
 import ManualEditorButton from '@/experiments/openWorkflowInAssistant/components/ManualEditorButton.vue';
@@ -54,6 +55,7 @@ const emit = defineEmits<{
 	toggleExpanded: [];
 	closeTab: [tabId: string];
 	openTab: [tab: ArtifactTab];
+	reorderTab: [tabId: string, toIndex: number];
 }>();
 
 const i18n = useI18n();
@@ -204,6 +206,7 @@ let isPointerOnTab = false;
 
 function showTabHoverCard(tab: ArtifactTab, event: MouseEvent) {
 	if (!(event.currentTarget instanceof HTMLElement)) return;
+	if (tabDrag.draggedTabId.value !== undefined) return;
 	const target = { tabId: tab.id, reference: event.currentTarget };
 	isPointerOnTab = true;
 	stopCloseTimer();
@@ -242,6 +245,22 @@ watch(hoveredTab, (tab) => {
 function handleHoverCardOpenChange(open: boolean) {
 	if (open) stopCloseTimer();
 	else if (!isPointerOnTab) scheduleHideTabHoverCard();
+}
+
+// --- Reordering ---
+
+const tabDrag = useTabDragReorder({
+	getTabElements: () => {
+		const tabList = getTabListElement();
+		return tabList ? Array.from(tabList.querySelectorAll<HTMLElement>('[data-tab-item-id]')) : [];
+	},
+	onReorder: (tabId, toIndex) => emit('reorderTab', tabId, toIndex),
+	onDragStart: () => hideTabHoverCard(),
+});
+
+function tabDragStyle(tabId: string) {
+	const offset = tabDrag.offsets.value[tabId];
+	return offset ? { transform: `translateX(${offset}px)` } : undefined;
 }
 
 // --- New tab picker ---
@@ -303,8 +322,17 @@ async function handleCopyLink(tab: ArtifactTab) {
 				<ContextMenuTrigger as-child>
 					<!-- The close button cannot sit inside the trigger button, so both share a wrapper. -->
 					<div
-						:class="[$style.tab, { [$style.tabActive]: tab.id === activeTabId }]"
+						:class="[
+							$style.tab,
+							{
+								[$style.tabActive]: tab.id === activeTabId,
+								[$style.tabDragging]: tab.id === tabDrag.draggedTabId.value,
+								[$style.tabMovable]: tabDrag.draggedTabId.value !== undefined,
+							},
+						]"
+						:style="tabDragStyle(tab.id)"
 						:data-tab-item-id="tab.id"
+						@pointerdown="tabDrag.onPointerDown(tab.id, $event)"
 						@mouseenter="showTabHoverCard(tab, $event)"
 						@mouseleave="handleTabMouseLeave"
 						@contextmenu="hideTabHoverCard"
@@ -334,6 +362,7 @@ async function handleCopyLink(tab: ArtifactTab) {
 								variant="ghost"
 								size="xsmall"
 								:class="$style.closeButton"
+								v-bind="{ [TAB_DRAG_IGNORE_ATTRIBUTE]: '' }"
 								:aria-label="
 									i18n.baseText('instanceAi.previewTabBar.closeTab', {
 										interpolate: { name: tab.name },
@@ -535,6 +564,18 @@ async function handleCopyLink(tab: ArtifactTab) {
 
 	&.tabActive {
 		--tab--background: light-dark(var(--color--neutral-150), var(--color--neutral-800));
+	}
+
+	// While a drag runs, the other tabs slide aside. There is no transition after
+	// the drop, so the tabs land in their new places at once.
+	&.tabMovable {
+		transition: transform 150ms ease;
+	}
+
+	&.tabDragging {
+		z-index: 1;
+		transition: none;
+		cursor: grabbing;
 	}
 
 	// Show the close button on hover and while it has keyboard focus.
