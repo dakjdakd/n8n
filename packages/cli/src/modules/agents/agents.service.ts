@@ -29,6 +29,7 @@ import { getAgentOrThrow } from './utils/get-agent-or-throw';
 import { AgentChatAttachmentService } from './agent-chat-attachment.service';
 import { AgentExecutionService } from './agent-execution.service';
 import { AgentKnowledgeService } from './agent-knowledge.service';
+import { AgentPolicyService } from './agent-policy.service';
 import { AgentRuntimeCacheService } from './agent-runtime-cache.service';
 import { AgentTestChatService } from './agent-test-chat.service';
 import { Agent } from './entities/agent.entity';
@@ -81,6 +82,7 @@ export class AgentsService {
 		private readonly eventService: EventService,
 		private readonly agentExecutionService: AgentExecutionService,
 		private readonly credentialsService: CredentialsService,
+		private readonly agentPolicyService: AgentPolicyService,
 	) {}
 
 	/**
@@ -131,6 +133,7 @@ export class AgentsService {
 			user,
 			defaultModel,
 		});
+		await this.agentPolicyService.enforceSave(projectId, null, schemaConfig, null);
 
 		const agent = this.agentRepository.create({
 			...(id ? { id } : {}),

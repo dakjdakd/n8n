@@ -65,6 +65,8 @@ import { Telemetry } from '@/telemetry';
 import { AGENT_TOOLS, TOOLS_BY_SCOPE } from '../mcp-scopes';
 import { USER_CALLED_MCP_TOOL_EVENT } from '../mcp.constants';
 import { McpAgentToolsService } from '../tools/agents/agent-tools.service';
+import { PolicyEnforcementService } from '@/policy/policy-enforcement.service';
+import { AgentPolicyService } from '@/modules/agents/agent-policy.service';
 
 const userHasScopesMock = userHasScopes as Mock;
 
@@ -235,6 +237,7 @@ describe('McpAgentToolsService', () => {
 			mock<AgentSetupCompletionService>(),
 			modificationTelemetry,
 			agentUpdateBroadcaster,
+			new AgentPolicyService(new PolicyEnforcementService()),
 		);
 		agentCustomToolsService.buildCustomTool.mockImplementation(
 			async (agentId, projectId, code, descriptor, context, options) =>

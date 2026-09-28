@@ -1,4 +1,5 @@
 import type { PolicedWorkflow, PolicyDecision, PolicyViolation } from '@n8n/decorators';
+import { workflowContentSubject } from '@n8n/decorators';
 import { UnexpectedError } from 'n8n-workflow';
 import { mock, type MockProxy } from 'vitest-mock-extended';
 
@@ -201,6 +202,116 @@ describe('PolicyEnforcementService', () => {
 		});
 	});
 
+	describe('inline agents', () => {
+		let service: PolicyEnforcementService;
+		let backend: MockProxy<PolicyEnforcementBackend>;
+
+		const withInlineAgent: PolicedWorkflow = {
+			id: 'wf-1',
+			name: 'My workflow',
+			nodes: [
+				{
+					id: 'n1',
+					name: 'Message an Agent',
+					type: 'n8n-nodes-base.messageAnAgent',
+					typeVersion: 2,
+					position: [0, 0],
+					parameters: {
+						agentSource: 'inline',
+						inlineAgent: {
+							config: {
+								tools: [
+									{
+										type: 'node',
+										name: 'Current date',
+										node: { nodeType: 'n8n-nodes-base.dateTime', nodeTypeVersion: 2 },
+									},
+								],
+							},
+						},
+					},
+				},
+			],
+		};
+
+		const checkedTypes = (call: unknown[]) =>
+			(call[1] as { workflow: PolicedWorkflow }).workflow.nodes.map((node) => node.type);
+
+		const expectedTypes = ['n8n-nodes-base.messageAnAgent', 'n8n-nodes-base.dateTime'];
+
+		beforeEach(() => {
+			backend = mock<PolicyEnforcementBackend>();
+			backend.enforce.mockResolvedValue(cleared);
+			backend.evaluate.mockResolvedValue(cleared);
+			service = new PolicyEnforcementService();
+			service.setImplementation(backend);
+		});
+
+		it.each([
+			[
+				'workflowPublish',
+				async (s: PolicyEnforcementService) =>
+					await s.enforceWorkflowPublish({ workflow: withInlineAgent, projectId: 'proj-1' }),
+			],
+			[
+				'workflowStart',
+				async (s: PolicyEnforcementService) =>
+					await s.enforceWorkflowStart({ workflow: withInlineAgent, projectId: 'proj-1' }),
+			],
+			[
+				'workflowTransfer',
+				async (s: PolicyEnforcementService) =>
+					await s.enforceWorkflowTransfer({ workflow: withInlineAgent, targetProjectId: 'proj-2' }),
+			],
+			[
+				'contentImport',
+				async (s: PolicyEnforcementService) =>
+					await s.enforceContentImport({
+						workflow: withInlineAgent,
+						projectId: 'proj-1',
+						transport: 'cli',
+					}),
+			],
+		] as const)('shows the checks the inline agent tools at %s', async (_point, enforce) => {
+			await enforce(service);
+
+			expect(checkedTypes(backend.enforce.mock.calls[0])).toEqual(expectedTypes);
+		});
+
+		it('expands the stored workflow too, so existing inline tools are grandfathered on save', async () => {
+			await service.enforceWorkflowSave({
+				workflow: withInlineAgent,
+				storedWorkflow: withInlineAgent,
+				projectId: 'proj-1',
+			});
+
+			const context = backend.enforce.mock.calls[0][1] as {
+				storedWorkflow: PolicedWorkflow;
+			};
+			expect(checkedTypes(backend.enforce.mock.calls[0])).toEqual(expectedTypes);
+			expect(context.storedWorkflow.nodes.map((node) => node.type)).toEqual(expectedTypes);
+		});
+
+		it('expands for evaluate as well as enforce', async () => {
+			await service.evaluateWorkflowPublish({ workflow: withInlineAgent, projectId: 'proj-1' });
+
+			expect(checkedTypes(backend.evaluate.mock.calls[0])).toEqual(expectedTypes);
+		});
+
+		// The repository seal hashes the nodes it writes, so the clearance must match those.
+		it('binds a create to the nodes the host writes, not the expanded ones', async () => {
+			const created = { ...withInlineAgent, id: null };
+
+			const token = await service.enforceWorkflowSave({
+				workflow: created,
+				storedWorkflow: null,
+				projectId: 'proj-1',
+			});
+
+			expect(token.subject).toEqual(workflowContentSubject(created));
+		});
+	});
+
 	describe('subject binding', () => {
 		const service = new PolicyEnforcementService();
 
@@ -253,6 +364,15 @@ describe('PolicyEnforcementService', () => {
 			const withNode = await enforce([mock<PolicedWorkflow['nodes'][number]>({ type: 'slack' })]);
 
 			expect(empty.subject.id).not.toBe(withNode.subject.id);
+		});
+
+		it('binds an agent to its id with the agent subject type', async () => {
+			const token = await service.enforceWorkflowPublish({
+				workflow: { id: 'agent-1', name: 'Support agent', nodes: [], artifactKind: 'agent' },
+				projectId: 'proj-1',
+			});
+
+			expect(token.subject).toEqual({ type: 'agent', id: 'agent-1' });
 		});
 
 		it('binds a credential create to a hash of its type', async () => {
