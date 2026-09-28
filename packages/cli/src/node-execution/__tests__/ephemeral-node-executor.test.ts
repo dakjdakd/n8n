@@ -739,6 +739,7 @@ describe('EphemeralNodeExecutor', () => {
 					id: null,
 					name: 'Target Node',
 					nodes: [expect.objectContaining({ type: 'n8n-nodes-base.dateTimeTool', typeVersion: 2 })],
+					artifactKind: 'agent',
 				},
 				projectId: 'p-1',
 			});

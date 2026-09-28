@@ -389,21 +389,27 @@ describe('AgentsService', () => {
 	describe('policy', () => {
 		const user = { id: 'user-1' } as unknown as User;
 
-		it('polices a seeded config as a create, with no stored draft to grandfather', async () => {
+		const dateTimeTool = {
+			type: 'node' as const,
+			name: 'Current date',
+			node: { nodeType: 'n8n-nodes-base.dateTime', nodeTypeVersion: 2, nodeParameters: {} },
+		};
+
+		it('polices the seeded node tools as a create, with no stored draft to grandfather', async () => {
 			const { service, agentRepository, agentPolicyService } = makeService();
 			const saved = makeAgent();
 			agentRepository.create.mockReturnValue(saved);
 			agentRepository.save.mockResolvedValue(saved);
 
 			await service.create(projectId, 'Support Agent', {
-				schema: { name: 'Support Agent', model: '', instructions: 'Triage tickets.' },
+				schema: { name: 'Support Agent', model: '', instructions: '', tools: [dateTimeTool] },
 				user,
 			});
 
 			expect(agentPolicyService.enforceSave).toHaveBeenCalledWith(
 				projectId,
 				null,
-				expect.objectContaining({ instructions: 'Triage tickets.' }),
+				expect.objectContaining({ tools: [expect.objectContaining(dateTimeTool)] }),
 				null,
 			);
 		});
@@ -414,7 +420,7 @@ describe('AgentsService', () => {
 
 			await expect(
 				service.create(projectId, 'Support Agent', {
-					schema: { name: 'Support Agent', model: '', instructions: 'Triage tickets.' },
+					schema: { name: 'Support Agent', model: '', instructions: '', tools: [dateTimeTool] },
 				}),
 			).rejects.toThrow('Blocked by policy');
 
