@@ -1423,6 +1423,7 @@ describe('useCanvasPreview', () => {
 					],
 					closedTabs: [],
 					activeTab: { type: 'workflow', id: 'wf-2' },
+					previewOpen: true,
 				});
 			} finally {
 				vi.useRealTimers();
