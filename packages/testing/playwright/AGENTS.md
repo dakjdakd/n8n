@@ -572,6 +572,25 @@ const requirements: TestRequirements = {
 the spec's own nesting. The example above assumes `tests/e2e/<area>/`; add one
 `../` per extra level down.
 
+## Community Packages
+
+Specs that install real community node packages use `test.use({ capability: 'community-packages' })`.
+The capability adds an offline Verdaccio (`n8nContainer.services.npmRegistry`) and points n8n at it.
+Nothing is proxied from npmjs.org: publish the packages a test needs with
+`services.npmRegistry.publishDirectory(dir)` before installing them. A non-default registry is a
+licensed feature, so enable it first:
+
+```typescript
+test.use({ capability: 'community-packages' });
+
+test.beforeEach(async ({ api }) => {
+  await api.enableFeature('communityNodes:customRegistry');
+});
+```
+
+New capabilities also need an entry in `scripts/distribution-images.mjs`, or the CI shard planner
+refuses them; `pnpm test:unit` covers that mapping.
+
 ## Shard Rebalancing
 
 When refactoring, adding, or moving significant numbers of tests, consider rebalancing test shards to maintain even CI distribution. See `docs/ORCHESTRATION.md` for details.
