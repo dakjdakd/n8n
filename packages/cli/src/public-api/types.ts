@@ -8,7 +8,6 @@ import type {
 	UpdateOidcConfigurationDto,
 	UpdateOtelSettingsDto,
 	TestOtelTraceDto,
-	UpdateSamlConfigurationDto,
 	UpdateLdapConfigurationDto,
 	LdapSyncDto,
 } from '@n8n/api-types';
@@ -205,15 +204,6 @@ export declare namespace LogStreamingRequest {
 	type UpdateDestination = AuthenticatedRequest<{ id: string }, {}, PublicCreateDestination>;
 	type TestDestination = AuthenticatedRequest<{ id: string }>;
 	type DeleteDestination = AuthenticatedRequest<{ id: string }>;
-}
-
-// ----------------------------------
-//        /settings/sso/saml
-// ----------------------------------
-
-export declare namespace SsoSamlRequest {
-	type Get = AuthenticatedRequest;
-	type Update = AuthenticatedRequest<{}, {}, UpdateSamlConfigurationDto>;
 }
 
 // ----------------------------------
