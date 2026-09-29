@@ -20,6 +20,10 @@ import { BaseRepository } from './base-repository';
 import { FolderRepository } from './folder.repository';
 import { SharedWorkflowRepository } from './shared-workflow.repository';
 import { runWorkflowContentWrite } from './workflow-content-write-context';
+import {
+	runningVersionRowsCondition,
+	type RestrictedNodeTypes,
+} from './workflow-dependency.repository';
 import { WorkflowHistoryRepository } from './workflow-history.repository';
 import {
 	WebhookEntity,
@@ -74,6 +78,28 @@ type WorkflowListResult = {
 	workflows: ListQueryDb.Workflow.Plain[] | ListQueryDb.Workflow.WithSharing[];
 	count: number;
 };
+
+function isRestrictedNodeTypes(value: unknown): value is RestrictedNodeTypes {
+	return (
+		typeof value === 'object' &&
+		value !== null &&
+		'shared' in value &&
+		isStringArray(value.shared) &&
+		'exceptProjectIds' in value &&
+		isStringArray(value.exceptProjectIds) &&
+		'byProjects' in value &&
+		Array.isArray(value.byProjects) &&
+		value.byProjects.every(
+			(group: unknown) =>
+				typeof group === 'object' &&
+				group !== null &&
+				'projectIds' in group &&
+				isStringArray(group.projectIds) &&
+				'nodeTypes' in group &&
+				isStringArray(group.nodeTypes),
+		)
+	);
+}
 
 /**
  * The workflows an agent's workflow tools refer to: refs by id, legacy refs by
@@ -1312,6 +1338,7 @@ export class WorkflowRepository extends BaseRepository<WorkflowEntity> {
 		this.applyProjectFilter(qb, filter);
 		this.applyParentFolderFilter(qb, filter);
 		this.applyNodeTypesFilter(qb, filter);
+		this.applyRestrictedNodeTypesFilter(qb, filter);
 		this.applyAvailableInMCPFilter(qb, filter);
 	}
 
@@ -1547,6 +1574,69 @@ export class WorkflowRepository extends BaseRepository<WorkflowEntity> {
 			.where('dep.dependencyType = :depType', { depType: 'nodeType' })
 			.andWhere('dep.dependencyKey IN (:...nodeTypes)', { nodeTypes })
 			.andWhere('dep.publishedVersionId IS NULL');
+	}
+
+	/**
+	 * Matches workflows whose running version uses a node type restricted in the workflow's owner
+	 * project. `restrictedNodeTypes` is resolved by the service from the policies, never by a client.
+	 */
+	private applyRestrictedNodeTypesFilter(
+		qb: SelectQueryBuilder<WorkflowEntity>,
+		filter: ListQuery.Options['filter'],
+	): void {
+		const restricted = filter?.restrictedNodeTypes;
+		if (!isRestrictedNodeTypes(restricted)) return;
+
+		const conditions: string[] = [];
+		const parameters: Record<string, string[]> = {};
+
+		if (restricted.shared.length > 0) {
+			parameters.restrictedShared = restricted.shared;
+			const inShared = 'restrictedDep.dependencyKey IN (:...restrictedShared)';
+			if (restricted.exceptProjectIds.length > 0) {
+				parameters.restrictedExceptProjectIds = restricted.exceptProjectIds;
+				conditions.push(
+					`(restrictedOwner.projectId NOT IN (:...restrictedExceptProjectIds) AND ${inShared})`,
+				);
+			} else {
+				conditions.push(`(${inShared})`);
+			}
+		}
+
+		restricted.byProjects.forEach(({ projectIds, nodeTypes }, index) => {
+			if (projectIds.length === 0 || nodeTypes.length === 0) return;
+			parameters[`restrictedProjects${index}`] = projectIds;
+			parameters[`restrictedTypes${index}`] = nodeTypes;
+			conditions.push(
+				`(restrictedOwner.projectId IN (:...restrictedProjects${index}) AND restrictedDep.dependencyKey IN (:...restrictedTypes${index}))`,
+			);
+		});
+
+		if (conditions.length === 0) {
+			qb.andWhere('1 = 0');
+			return;
+		}
+
+		const subQuery = this.manager
+			.createQueryBuilder(WorkflowDependency, 'restrictedDep')
+			.select('restrictedDep.workflowId')
+			.distinct(true)
+			.innerJoin(
+				WorkflowEntity,
+				'restrictedWorkflow',
+				'restrictedWorkflow.id = restrictedDep.workflowId',
+			)
+			.innerJoin(
+				SharedWorkflow,
+				'restrictedOwner',
+				"restrictedOwner.workflowId = restrictedDep.workflowId AND restrictedOwner.role = 'workflow:owner'",
+			)
+			.where('restrictedDep.dependencyType = :restrictedDepType', { restrictedDepType: 'nodeType' })
+			.andWhere(runningVersionRowsCondition('restrictedDep', 'restrictedWorkflow'))
+			.andWhere(`(${conditions.join(' OR ')})`, parameters);
+
+		qb.andWhere(`workflow.id IN (${subQuery.getQuery()})`);
+		qb.setParameters(subQuery.getParameters());
 	}
 
 	private applyOwnedByRelation(

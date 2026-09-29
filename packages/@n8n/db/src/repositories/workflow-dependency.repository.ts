@@ -14,6 +14,33 @@ import { SharedWorkflowRepository } from './shared-workflow.repository';
 import type { User } from '../entities';
 import { WorkflowDependency, WorkflowEntity, WORKFLOW_DEPENDENCY_INDEX_VERSION } from '../entities';
 
+export interface NodeTypesInProjects {
+	projectIds: string[];
+	nodeTypes: string[];
+}
+
+/**
+ * The node types a policy denies, by the owner project of a workflow. Most projects get the
+ * same verdict, so they share one list, and only the projects whose policy changes it are named.
+ */
+export interface RestrictedNodeTypes {
+	/** Denied in every project except `exceptProjectIds`. */
+	shared: string[];
+	/** The projects whose own policy changes the shared verdict. */
+	exceptProjectIds: string[];
+	/** Denied in the excepted projects, grouped by identical outcome. */
+	byProjects: NodeTypesInProjects[];
+}
+
+/**
+ * Keeps the index rows of the version a workflow runs: the published version when there is one,
+ * the draft otherwise. Rows of an unpublished version stay in the index, so the match is on the
+ * version id, not on the presence of a published row.
+ */
+export function runningVersionRowsCondition(dependencyAlias: string, workflowAlias: string) {
+	return `((${workflowAlias}.activeVersionId IS NULL AND ${dependencyAlias}.publishedVersionId IS NULL) OR ${dependencyAlias}.publishedVersionId = ${workflowAlias}.activeVersionId)`;
+}
+
 /**
  * Which workflows an aggregate over the index may span. The roles come from the caller
  * because they are derived from scopes, which live above this layer; everything else about
@@ -159,6 +186,19 @@ export class WorkflowDependencyRepository extends Repository<WorkflowDependency>
 			// SQLite hands back the stored string; Postgres hands back a Date.
 			updatedAt: row.updatedAt instanceof Date ? row.updatedAt : new Date(row.updatedAt),
 		}));
+	}
+
+	/** The node types that the running versions of all workflows use. */
+	async findRunningNodeTypes(): Promise<string[]> {
+		const rows = await this.createQueryBuilder('dependency')
+			.innerJoin(WorkflowEntity, 'workflow', 'workflow.id = dependency.workflowId')
+			.select('dependency.dependencyKey', 'nodeType')
+			.distinct(true)
+			.where('dependency.dependencyType = :dependencyType', { dependencyType: 'nodeType' })
+			.andWhere(runningVersionRowsCondition('dependency', 'workflow'))
+			.getRawMany<{ nodeType: string }>();
+
+		return rows.map(({ nodeType }) => nodeType);
 	}
 
 	/**
