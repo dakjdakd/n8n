@@ -1,6 +1,7 @@
 import { LICENSE_FEATURES } from '@n8n/constants';
 import type { ModuleInterface } from '@n8n/decorators';
 import { BackendModule } from '@n8n/decorators';
+import { Container } from '@n8n/di';
 
 /**
  * The module-level `licenseFlag` skips `init()` on an unlicensed instance, so neither the
@@ -25,6 +26,18 @@ export class TypeAvailabilityPoliciesModule implements ModuleInterface {
 		// Side-effecting imports: `@PolicyCheck` registers the check on class definition.
 		await import('./node-type-policy.check.js');
 		await import('./credential-type-policy.check.js');
+
+		const { RestrictedNodeTypesProviderProxy } = await import(
+			'@/workflows/restricted-node-types-provider-proxy.service.js'
+		);
+		const { NodeTypePolicyRestrictedTypesProvider } = await import(
+			'./restricted-node-types.provider.js'
+		);
+		// Resolved per call, so init does not construct the provider's repositories.
+		Container.get(RestrictedNodeTypesProviderProxy).registerProvider({
+			findRestrictedNodeTypesInUse: async () =>
+				await Container.get(NodeTypePolicyRestrictedTypesProvider).findRestrictedNodeTypesInUse(),
+		});
 	}
 
 	async entities() {

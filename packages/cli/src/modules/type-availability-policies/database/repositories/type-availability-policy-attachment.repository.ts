@@ -1,4 +1,4 @@
-import { BaseRepository, TransactionRunner, type OperationContext } from '@n8n/db';
+import { BaseRepository, TransactionRunner, chunkIds, type OperationContext } from '@n8n/db';
 import { Service } from '@n8n/di';
 import { DataSource, In, type EntityManager } from '@n8n/typeorm';
 import { UserError } from 'n8n-workflow';
@@ -54,6 +54,46 @@ export class TypeAvailabilityPolicyAttachmentRepository extends BaseRepository<T
 				},
 			];
 		});
+	}
+
+	/**
+	 * `listAttachmentsForScope` for many scopes in two queries per chunk, keyed by scope id. A
+	 * scope with no attachments has no entry.
+	 */
+	async listAttachmentsForScopes(
+		scopeIds: string[],
+		ctx: OperationContext,
+	): Promise<Map<string, PolicyAttachment[]>> {
+		const manager = this.managerFor(ctx);
+		const byScope = new Map<string, PolicyAttachment[]>();
+
+		for (const ids of chunkIds(scopeIds)) {
+			const attachments = await manager.findBy(TypeAvailabilityPolicyAttachment, {
+				scopeId: In(ids),
+			});
+			if (attachments.length === 0) continue;
+
+			const policies = await manager.findBy(TypeAvailabilityPolicy, {
+				id: In([...new Set(attachments.map((a) => a.policyId))]),
+			});
+			const rulesByPolicyId = new Map(policies.map((p) => [p.id, p.rules]));
+
+			for (const attachment of attachments) {
+				const rules = rulesByPolicyId.get(attachment.policyId);
+				if (!rules) continue;
+
+				const list = byScope.get(attachment.scopeId) ?? [];
+				list.push({
+					policyId: attachment.policyId,
+					rules,
+					priority: attachment.priority,
+					isFloor: attachment.isFloor,
+				});
+				byScope.set(attachment.scopeId, list);
+			}
+		}
+
+		return byScope;
 	}
 
 	/**

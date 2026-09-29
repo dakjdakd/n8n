@@ -1,7 +1,11 @@
 import { LICENSE_FEATURES } from '@n8n/constants';
 import { ControllerRegistryMetadata, ModuleMetadata, PolicyCheckMetadata } from '@n8n/decorators';
 import { Container } from '@n8n/di';
+import { mock } from 'vitest-mock-extended';
 
+import { RestrictedNodeTypesProviderProxy } from '@/workflows/restricted-node-types-provider-proxy.service';
+
+import { NodeTypePolicyRestrictedTypesProvider } from '../restricted-node-types.provider';
 // Importing the module runs the @BackendModule decorator, registering its metadata.
 import { TypeAvailabilityPoliciesModule } from '../type-availability-policies.module';
 
@@ -68,6 +72,25 @@ describe('TypeAvailabilityPoliciesModule', () => {
 
 		expect(registered).toContain('NodeTypePolicyCheck');
 		expect(registered).toContain('CredentialTypePolicyCheck');
+	}, 30_000);
+
+	// Without the registration the workflow list's restricted node filter silently matches nothing.
+	it('answers the workflow list proxy from its restricted node types provider on init', async () => {
+		const restricted = {
+			shared: ['n8n-nodes-base.slack'],
+			exceptProjectIds: [],
+			byProjects: [],
+		};
+		const provider = mock<NodeTypePolicyRestrictedTypesProvider>();
+		provider.findRestrictedNodeTypesInUse.mockResolvedValue(restricted);
+		Container.set(NodeTypePolicyRestrictedTypesProvider, provider);
+		const module = new TypeAvailabilityPoliciesModule();
+
+		await module.init();
+
+		await expect(
+			Container.get(RestrictedNodeTypesProviderProxy).findRestrictedNodeTypesInUse(),
+		).resolves.toEqual(restricted);
 	}, 30_000);
 
 	it('exposes its entities so the datasource picks them up', async () => {
